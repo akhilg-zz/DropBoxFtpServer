@@ -497,7 +497,8 @@ class DummyAuthorizer(object):
         self.user_table = {}
 
     def add_user(self, username, password, homedir, perm='elr',
-                    msg_login="Login successful.", msg_quit="Goodbye."):
+                 dropbox_session=None,
+                 msg_login="Login successful.", msg_quit="Goodbye."):
         """Add a user to the virtual users table.
 
         AuthorizerError exceptions raised on error conditions such as
@@ -533,7 +534,8 @@ class DummyAuthorizer(object):
                'perm': perm,
                'operms': {},
                'msg_login': str(msg_login),
-               'msg_quit': str(msg_quit)
+               'msg_quit': str(msg_quit),
+               'session': dropbox_session,
                }
         self.user_table[username] = dic
 
@@ -557,7 +559,8 @@ class DummyAuthorizer(object):
 
     def remove_user(self, username):
         """Remove a user from the virtual users table."""
-        del self.user_table[username]
+        if username in self.user_table:
+            del self.user_table[username]
 
     def override_perm(self, username, directory, perm, recursive=False):
         """Override permissions for a given directory."""
@@ -1352,7 +1355,6 @@ class ThrottledDTPHandler(DTPHandler):
 
 # --- producers
 
-
 class FileProducer(object):
     """Producer wrapper for file[-like] objects."""
 
@@ -1714,13 +1716,16 @@ class AbstractedFS(object):
         """
         if self.isdir(path):
             listing = self.listdir(path)
+            print path, " " , listing
+            # TODO(akhilg): Sort based on the name.
             listing.sort()
             return self.format_list(path, listing)
         # if path is a file or a symlink we return information about it
         else:
             basedir, filename = os.path.split(path)
+            listing = self.get_metadata(path)
             self.lstat(path)  # raise exc in case of problems
-            return self.format_list(basedir, [filename])
+            return self.format_list(basedir, [listing])
 
     def format_list(self, basedir, listing, ignore_err=True):
         """Return an iterator object that yields the entries of given
@@ -1748,47 +1753,42 @@ class AbstractedFS(object):
         else:
             timefunc = time.localtime
         now = time.time()
+        print listing
         for basename in listing:
-            file = os.path.join(basedir, basename)
-            try:
-                st = self.lstat(file)
-            except OSError:
-                if ignore_err:
-                    continue
-                raise
-            perms = _filemode(st.st_mode)  # permissions
-            nlinks = st.st_nlink  # number of links to inode
-            if not nlinks:  # non-posix system, let's use a bogus value
-                nlinks = 1
-            size = st.st_size  # file size
-            uname = self.get_user_by_uid(st.st_uid)
-            gname = self.get_group_by_gid(st.st_gid)
-            mtime = timefunc(st.st_mtime)
-            # if modificaton time > 6 months shows "month year"
-            # else "month hh:mm";  this matches proftpd format, see:
-            # http://code.google.com/p/pyftpdlib/issues/detail?id=187
-            if (now - st.st_mtime) > 180 * 24 * 60 * 60:
-                fmtstr = "%d  %Y"
-            else:
-                fmtstr = "%d %H:%M"
-            try:
-                mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
-                                      time.strftime(fmtstr, mtime))
-            except ValueError:
-                # It could be raised if last mtime happens to be too
-                # old (prior to year 1900) in which case we return
-                # the current time as last mtime.
-                mtime = timefunc()
-                mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
-                                      time.strftime("%d %H:%M", mtime))
+            # TODO(akhilg): Format this better and address the WARNING on the client.
+            print basedir, " ", basename['path']
+            file = os.path.join(basedir, basename['path'])
 
-            # if the file is a symlink, resolve it, e.g. "symlink -> realfile"
-            if stat.S_ISLNK(st.st_mode) and hasattr(self, 'readlink'):
-                basename = basename + " -> " + self.readlink(file)
+            perms = "rwxrwxrwx" # _filemode(st.st_mode)  # permissions
+            size = basename['size']
+            uname = "akhilgaa"
+            gname = "akhilgaa"
+            mtime = basename['modified']
+#             # if modificaton time > 6 months shows "month year"
+#             # else "month hh:mm";  this matches proftpd format, see:
+#             # http://code.google.com/p/pyftpdlib/issues/detail?id=187
+#             if (now - st.st_mtime) > 180 * 24 * 60 * 60:
+#                 fmtstr = "%d  %Y"
+#             else:
+#                 fmtstr = "%d %H:%M"
+#             try:
+#                 mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
+#                                       time.strftime(fmtstr, mtime))
+#             except ValueError:
+#                 # It could be raised if last mtime happens to be too
+#                 # old (prior to year 1900) in which case we return
+#                 # the current time as last mtime.
+#                 mtime = timefunc()
+#                 mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
+#                                       time.strftime("%d %H:%M", mtime))
+
+#             # if the file is a symlink, resolve it, e.g. "symlink -> realfile"
+#             if stat.S_ISLNK(st.st_mode) and hasattr(self, 'readlink'):
+#                 basename = basename + " -> " + self.readlink(file)
 
             # formatting is matched with proftpd ls output
-            yield "%s %3s %-8s %-8s %8s %s %s\r\n" % (perms, nlinks, uname, gname,
-                                                      size, mtimestr, basename)
+            yield "%s 1 %-8s %-8s %8s %s %s\r\n" % (perms, uname, gname,
+                                                    size, mtime, basename['path'])
 
     def format_mlsx(self, basedir, listing, perms, facts, ignore_err=True):
         """Return an iterator object that yields the entries of a given
@@ -2395,12 +2395,18 @@ class FTPHandler(object, asynchat.async_chat):
         """Called every time a file has been succesfully received.
         "file" is the absolute name of the file just being received.
         """
+        # TODO(akhilg): Make this asynchronous.
+        print "Received ", file
+        fd = open(file, "r")
+        self.fs.put_file(file, fd)
+        fd.close()
 
     def on_incomplete_file_sent(self, file):
         """Called every time a file has not been entirely sent.
         (e.g. ABOR during transfer or client disconnected).
         "file" is the absolute name of that file.
         """
+        # TODO(akhilg): Handle this.
 
     def on_incomplete_file_received(self, file):
         """Called every time a file has not been entirely received
@@ -2419,7 +2425,8 @@ class FTPHandler(object, asynchat.async_chat):
 
     def on_logout(self, username):
         """Called when user logs out due to QUIT or USER issued twice."""
-
+        print "Removing ", username
+        self.authorizer.remove_user(username)
 
     # --- internal callbacks
 
@@ -2877,7 +2884,8 @@ class FTPHandler(object, asynchat.async_chat):
         """
         try:
             if self.fs.isdir(path):
-                listing = self.run_as_current_user(self.fs.listdir, path)
+                listing = self.run_as_current_user(self.fs.compact_listdir, path)
+                print listing
             else:
                 # if path is a file we just list its name
                 self.fs.lstat(path)  # raise exc in case of problems
@@ -2931,6 +2939,7 @@ class FTPHandler(object, asynchat.async_chat):
             return
         try:
             listing = self.run_as_current_user(self.fs.listdir, path)
+            print listing
         except OSError, err:
             why = _strerror(err)
             self.respond('550 %s.' % why)
@@ -2948,7 +2957,7 @@ class FTPHandler(object, asynchat.async_chat):
         rest_pos = self._restart_position
         self._restart_position = 0
         try:
-            fd = self.run_as_current_user(self.fs.open, file, 'rb')
+            http_response = self.run_as_current_user(self.fs.get_file, file)
         except IOError, err:
             why = _strerror(err)
             self.respond('550 %s.' % why)
@@ -2973,8 +2982,9 @@ class FTPHandler(object, asynchat.async_chat):
             if not ok:
                 self.respond('554 %s' % why)
                 return
-        producer = FileProducer(fd, self._current_type)
-        self.push_dtp_data(producer, isproducer=True, file=fd, cmd="RETR")
+        producer = FileProducer(http_response, self._current_type)
+        self.push_dtp_data(producer, isproducer=True, file=http_response,
+                           cmd="RETR")
 
     def ftp_STOR(self, file, mode='w'):
         """Store a file (transfer from the client to the server)."""
@@ -2983,6 +2993,7 @@ class FTPHandler(object, asynchat.async_chat):
         # STOR: mode = 'w'
         # APPE: mode = 'a'
         # REST: mode = 'r+' (to permit seeking on file object)
+        print "Storing a file: ", file
         if 'a' in mode:
             cmd = 'APPE'
         else:
@@ -2997,27 +3008,6 @@ class FTPHandler(object, asynchat.async_chat):
             why = _strerror(err)
             self.respond('550 %s.' %why)
             return
-
-        if rest_pos:
-            # Make sure that the requested offset is valid (within the
-            # size of the file being resumed).
-            # According to RFC-1123 a 554 reply may result in case
-            # that the existing file cannot be repositioned as
-            # specified in the REST.
-            ok = 0
-            try:
-                if rest_pos > self.fs.getsize(file):
-                    raise ValueError
-                fd.seek(rest_pos)
-                ok = 1
-            except ValueError:
-                why = "Invalid REST parameter"
-            except IOError, err:
-                why = _strerror(err)
-            if not ok:
-                self.respond('554 %s' %why)
-                return
-
         if self.data_channel is not None:
             resp = "Data connection already open. Transfer starting."
             self.respond("125 " + resp)
@@ -3027,7 +3017,6 @@ class FTPHandler(object, asynchat.async_chat):
             resp = "File status okay. About to open data connection."
             self.respond("150 " + resp)
             self._in_dtp_queue = (fd, cmd)
-
 
     def ftp_STOU(self, line):
         """Store a file on the server with a unique name."""
@@ -3189,7 +3178,6 @@ class FTPHandler(object, asynchat.async_chat):
                     self.respond("530 " + msg)
                 self.log_cmd("PASS", line, 530, msg)
             self.on_login_failed(username, password)
-        print "pass", line
         if self.authorizer.validate_authentication(self.username, line):
             msg_login = self.authorizer.get_msg_login(self.username)
             if len(msg_login) <= 75:
@@ -3272,12 +3260,11 @@ class FTPHandler(object, asynchat.async_chat):
         # in ASCII mode.  Resuming downloads in binary mode is the
         # recommended way as specified in RFC-3659.
 
-        line = self.fs.fs2ftp(path)
         if self._current_type == 'a':
             why = "SIZE not allowed in ASCII mode"
             self.respond("550 %s." %why)
             return
-        if not self.fs.isfile(self.fs.realpath(path)):
+        if not self.fs.isfile(path):
             why = "%s is not retrievable" % line
             self.respond("550 %s." % why)
             return

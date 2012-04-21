@@ -1,10 +1,10 @@
 # The class responsible for authorizing the user with dropbox.
 #
 
-from pyftpdlib import ftpserver
 from dropbox import client, rest, session
 
 import app_config
+import ftpserver
 import oauth.oauth as oauth
 
 
@@ -32,17 +32,27 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
             return False
         print auth_token
         sess.set_token(auth_token.key, auth_token.secret)
-        # TODO(akhilg): Make sure the token is valid before returning.
+        # Try to get the account info to make sure the authentication
+        # is correct.
+        db_client = client.DropboxClient(sess)
+        try:
+            db_client.account_info()
+        except:
+            return False
+        # TODO(akhilg): Each user should have his/her own home directory.
         # If we are able to authenticate, add the user.
-        self.add_user(username, password, "/")
-        self.add_session(username, sess)
+        existing_password = self.get_password(username)
+        if (existing_password is None or
+            existing_password != password):
+            self.remove_user(username)
+            self.add_user(username, password, "/", perm="elrdfmwM",
+                          dropbox_session=sess)
         return True
 
     def get_password(self, username):
-        return self.user_table[username]['password']
-
-    def add_session(self, username, session):
-        self.session_table[username] = session
+        if username in self.user_table:
+            return self.user_table[username]['password']
+        return None
 
     def get_session(self, username):
-        return self.session_table[username]
+        return self.user_table[username]['session']
