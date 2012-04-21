@@ -4,12 +4,7 @@
 from pyftpdlib import ftpserver
 from dropbox import client, rest, session
 
-# Get your app key and secret from the Dropbox developer website
-APP_KEY = '6qedtlyqcwt7izw'
-APP_SECRET = 'ny4j2qfh2rpmjii'
-
-# ACCESS_TYPE should be 'dropbox' or 'app_folder' as configured for your app
-ACCESS_TYPE = 'app_folder'
+import app_config
 
 class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
     """
@@ -25,9 +20,9 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         Given the username and password, return true if dropbox
         validates the authentication.
         """
-        print username
-        print password
-        sess = session.DropboxSession(APP_KEY, APP_SECRET, ACCESS_TYPE)
+        sess = session.DropboxSession(app_config.APP_KEY, 
+                                      app_config.APP_SECRET,
+                                      app_config.ACCESS_TYPE)
         request_token = sess.obtain_request_token()
         url = sess.build_authorize_url(request_token)
         print "url:", url

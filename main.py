@@ -3,6 +3,7 @@
 import os
 import dropbox_authorizer
 import ftpserver
+import dropbox_fs
 
 def main():
     # Instantiate a dummy authorizer for managing 'virtual' users
@@ -22,6 +23,7 @@ def main():
     ftp_handler.authorizer = authorizer
     # have the ftp handler use the alternative dtp handler class
     ftp_handler.dtp_handler = dtp_handler
+    ftp_handler.abstracted_fs = dropbox_fs.DropBoxFileSystem
 
     # Define a customized banner (string returned when client connects)
     ftp_handler.banner = "pyftpdlib %s based ftpd ready." %ftpserver.__ver__
