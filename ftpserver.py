@@ -3189,7 +3189,7 @@ class FTPHandler(object, asynchat.async_chat):
                     self.respond("530 " + msg)
                 self.log_cmd("PASS", line, 530, msg)
             self.on_login_failed(username, password)
-
+        print "pass", line
         if self.authorizer.validate_authentication(self.username, line):
             msg_login = self.authorizer.get_msg_login(self.username)
             if len(msg_login) <= 75:

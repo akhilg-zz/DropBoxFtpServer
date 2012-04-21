@@ -1,22 +1,26 @@
-import app_config
+
 from dropbox import client, rest, session
+
+import app_config
 import ftpserver
+import oauth.oauth as oauth
 
 class DropBoxFileSystem(ftpserver.AbstractedFS):
     """
 
     """
     def __init__(self, root, cmd_channel):
-        sess = session.DropboxSession(app_config.APP_KEY,
-                                      app_config.APP_SECRET,
-                                      app_config.ACCESS_TYPE)
-        self.client = client.DropboxClient(sess)
         ftpserver.AbstractedFS.__init__(self, root, cmd_channel)
-        print self._cwd
+        sess = cmd_channel.authorizer.get_session(cmd_channel.username)
+        print sess.token
+        self.client = client.DropboxClient(sess)
 
     def rmdir(self, path):
         self.client.file_delete(path)
         
     def remove(self, path):
         self.client.file_delete(path)
-        
+
+    # Get the list of files in the directory.
+    def listdir(self, path):
+        return self.client.metadata(path)['contents']

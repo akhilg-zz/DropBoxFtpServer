@@ -16,6 +16,7 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         Initialize the session.
         """
         ftpserver.DummyAuthorizer.__init__(self)
+        self.session_table = {}
 
     def validate_authentication(self, username, password):
         """
@@ -25,11 +26,23 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         sess = session.DropboxSession(app_config.APP_KEY, 
                                       app_config.APP_SECRET,
                                       app_config.ACCESS_TYPE)
-        auth_token = oauth.OAuthToken('', '')
         try:
-            auth_token.from_string(password)
+            auth_token = oauth.OAuthToken.from_string(password)
         except:
             return False
+        print auth_token
+        sess.set_token(auth_token.key, auth_token.secret)
+        # TODO(akhilg): Make sure the token is valid before returning.
         # If we are able to authenticate, add the user.
         self.add_user(username, password, "/")
+        self.add_session(username, sess)
         return True
+
+    def get_password(self, username):
+        return self.user_table[username]['password']
+
+    def add_session(self, username, session):
+        self.session_table[username] = session
+
+    def get_session(self, username):
+        return self.session_table[username]
