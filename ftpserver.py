@@ -133,6 +133,8 @@ import heapq
 import optparse
 from tarfile import filemode as _filemode
 
+import dropbox
+
 try:
     import pwd
     import grp
