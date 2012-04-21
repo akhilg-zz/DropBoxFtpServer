@@ -5,6 +5,8 @@ from pyftpdlib import ftpserver
 from dropbox import client, rest, session
 
 import app_config
+import oauth.oauth as oauth
+
 
 class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
     """
@@ -13,7 +15,7 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         """
         Initialize the session.
         """
-        pass
+        ftpserver.DummyAuthorizer.__init__(self)
 
     def validate_authentication(self, username, password):
         """
@@ -23,10 +25,11 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         sess = session.DropboxSession(app_config.APP_KEY, 
                                       app_config.APP_SECRET,
                                       app_config.ACCESS_TYPE)
-        request_token = sess.obtain_request_token()
-        url = sess.build_authorize_url(request_token)
-        print "url:", url
-        print "Please visit this website and press the 'Allow' button, then hit 'Enter' here."
-        raw_input()
-        access_token = sess.obtain_access_token(request_token)
-        
+        auth_token = oauth.OAuthToken('', '')
+        try:
+            auth_token.from_string(password)
+        except:
+            return False
+        # If we are able to authenticate, add the user.
+        self.add_user(username, password, "/")
+        return True
