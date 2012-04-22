@@ -38,8 +38,8 @@ def main():
     ftpd = ftpserver.FTPServer(address, ftp_handler)
 
     # set a limit for connections
-    ftpd.max_cons = 256
-    ftpd.max_cons_per_ip = 5
+    ftpd.max_cons = 10000
+    ftpd.max_cons_per_ip = 1000
 
     # start ftp server
     ftpd.serve_forever()

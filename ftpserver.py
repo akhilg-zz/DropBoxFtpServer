@@ -118,6 +118,7 @@ Serving FTP on 127.0.0.1:21
 
 import asyncore
 import socket
+import io
 import os
 import sys
 import traceback
@@ -673,7 +674,7 @@ class PassiveDTP(object, Acceptor):
      - (int) timeout: the timeout for a remote client to establish
        connection with the listening socket. Defaults to 30 seconds.
     """
-    timeout = 30
+    timeout = 3000
 
     def __init__(self, cmd_channel, extmode=False):
         """Initialize the passive data server.
@@ -842,7 +843,7 @@ class ActiveDTP(object, Connector):
      - (int) timeout: the timeout for us to establish connection with
        the client's listening data socket.
     """
-    timeout = 30
+    timeout = 3000
 
     def __init__(self, ip, port, cmd_channel):
         """Initialize the active data channel attemping to connect
@@ -970,7 +971,7 @@ class DTPHandler(object, AsyncChat):
      - (int) ac_out_buffer_size: outgoing data buffer size (defaults 65536)
     """
 
-    timeout = 300
+    timeout = 3000
     ac_in_buffer_size = 65536
     ac_out_buffer_size = 65536
 
@@ -1714,7 +1715,6 @@ class AbstractedFS(object):
         """
         if self.isdir(path):
             listing = self.listdir(path)
-            print path, " " , listing
             # TODO(akhilg): Sort based on the name.
             listing.sort()
             return self.format_list(path, listing)
@@ -1751,10 +1751,8 @@ class AbstractedFS(object):
         else:
             timefunc = time.localtime
         now = time.time()
-        print listing
         for basename in listing:
             # TODO(akhilg): Format this better and address the WARNING on the client.
-            print basedir, " ", basename['path']
             file = os.path.join(basedir, basename['path'])
 
             perms = "rwxrwxrwx" # _filemode(st.st_mode)  # permissions
@@ -1988,7 +1986,7 @@ class FTPHandler(object, AsyncChat):
     proto_cmds = proto_cmds
 
     # session attributes (explained in the docstring)
-    timeout = 300
+    timeout = 3000
     banner = "pyftpdlib %s ready." % __ver__
     max_login_attempts = 3
     permit_foreign_addresses = False
@@ -2370,15 +2368,22 @@ class FTPHandler(object, AsyncChat):
         "file" is the absolute name of the file just being sent.
         """
 
+
     def on_file_received(self, file):
         """Called every time a file has been succesfully received.
         "file" is the absolute name of the file just being received.
         """
         # TODO(akhilg): Make this asynchronous.
-        print "Received ", file
-        fd = open(file, "r")
-        self.fs.put_file(file, fd)
-        fd.close()
+        line = "Starting to push %s to dropbox at %s" % (
+            file, time.strftime("%H:%M:%S", time.localtime(time.time())))
+        self.log(line)
+        io_stream = io.FileIO(file)
+        buffered_reader = io.BufferedReader(io_stream)
+        self.fs.put_file(file, buffered_reader)
+        buffered.close()
+        line = "Finished pushing %s to dropbox at %s" % (
+            file, time.strftime("%H:%M:%S", time.localtime(time.time())))
+        self.log(line)
 
     def on_incomplete_file_sent(self, file):
         """Called every time a file has not been entirely sent.
@@ -2404,8 +2409,6 @@ class FTPHandler(object, AsyncChat):
 
     def on_logout(self, username):
         """Called when user logs out due to QUIT or USER issued twice."""
-        print "Removing ", username
-        self.authorizer.remove_user(username)
 
     # --- internal callbacks
 
@@ -2864,7 +2867,6 @@ class FTPHandler(object, AsyncChat):
         try:
             if self.fs.isdir(path):
                 listing = self.run_as_current_user(self.fs.compact_listdir, path)
-                print listing
             else:
                 # if path is a file we just list its name
                 self.fs.lstat(path)  # raise exc in case of problems
@@ -2918,7 +2920,6 @@ class FTPHandler(object, AsyncChat):
             return
         try:
             listing = self.run_as_current_user(self.fs.listdir, path)
-            print listing
         except OSError, err:
             why = _strerror(err)
             self.respond('550 %s.' % why)
@@ -2933,34 +2934,14 @@ class FTPHandler(object, AsyncChat):
         """Retrieve the specified file (transfer from the server to the
         client)
         """
-        rest_pos = self._restart_position
-        self._restart_position = 0
         try:
             http_response = self.run_as_current_user(self.fs.get_file, file)
         except IOError, err:
+            print err
             why = _strerror(err)
             self.respond('550 %s.' % why)
             return
 
-        if rest_pos:
-            # Make sure that the requested offset is valid (within the
-            # size of the file being resumed).
-            # According to RFC-1123 a 554 reply may result in case that
-            # the existing file cannot be repositioned as specified in
-            # the REST.
-            ok = 0
-            try:
-                if rest_pos > self.fs.getsize(file):
-                    raise ValueError
-                fd.seek(rest_pos)
-                ok = 1
-            except ValueError:
-                why = "Invalid REST parameter"
-            except IOError, err:
-                why = _strerror(err)
-            if not ok:
-                self.respond('554 %s' % why)
-                return
         producer = FileProducer(http_response, self._current_type)
         self.push_dtp_data(producer, isproducer=True, file=http_response,
                            cmd="RETR")
@@ -2972,15 +2953,7 @@ class FTPHandler(object, AsyncChat):
         # STOR: mode = 'w'
         # APPE: mode = 'a'
         # REST: mode = 'r+' (to permit seeking on file object)
-        print "Storing a file: ", file
-        if 'a' in mode:
-            cmd = 'APPE'
-        else:
-            cmd = 'STOR'
-        rest_pos = self._restart_position
-        self._restart_position = 0
-        if rest_pos:
-            mode = 'r+'
+        cmd = 'STOR'
         try:
             fd = self.run_as_current_user(self.fs.open, file, mode + 'b')
         except IOError, err:
@@ -3055,26 +3028,11 @@ class FTPHandler(object, AsyncChat):
 
     def ftp_APPE(self, file):
         """Append data to an existing file on the server."""
-        # watch for APPE preceded by REST, which makes no sense.
-        if self._restart_position:
-            self.respond("450 Can't APPE while REST request is pending.")
-        else:
-            self.ftp_STOR(file, mode='a')
+        self.respond("502 Append operation not implemented.")
 
     def ftp_REST(self, line):
         """Restart a file transfer from a previous mark."""
-        if self._current_type == 'a':
-            self.respond('501 Resuming transfers not allowed in ASCII mode.')
-            return
-        try:
-            marker = int(line)
-            if marker < 0:
-                raise ValueError
-        except (ValueError, OverflowError):
-            self.respond("501 Invalid parameter.")
-        else:
-            self.respond("350 Restarting at position %s." % marker)
-            self._restart_position = marker
+        self.respond("502 Restart operation not implemented.")
 
     def ftp_ABOR(self, line):
         """Abort the current data transfer."""
@@ -3633,7 +3591,7 @@ class FTPServer(object, Acceptor):
         (defaults to 0 == unlimited).
     """
 
-    max_cons = 512
+    max_cons = 1024
     max_cons_per_ip = 0
 
     def __init__(self, address, handler):
