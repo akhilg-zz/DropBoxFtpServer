@@ -5,6 +5,14 @@ import dropbox_authorizer
 import ftpserver
 import dropbox_fs
 
+from tornado.options import define, options
+import tornado.ioloop
+import tornado.web
+import app_config
+import web_frontend
+
+define('cookie_secret', default="dee")
+
 def main():
     # Instantiate a dummy authorizer for managing 'virtual' users
     authorizer = dropbox_authorizer.DropBoxAuthorizer()
@@ -32,6 +40,20 @@ def main():
     # passive connections.  Decomment in case you're behind a NAT.
     #ftp_handler.masquerade_address = '151.25.42.11'
     #ftp_handler.passive_ports = range(60000, 65535)
+
+    # Set up the HTTP server to redirect users to authenticate via
+    # dropbox.
+    settings = dict(
+        cookie_secret=options.cookie_secret,
+        dropbox_consumer_key=app_config.APP_KEY,
+        dropbox_consumer_secret=app_config.APP_SECRET
+        )
+
+    application = tornado.web.Application([
+        (r"/", web_frontend.DropboxLoginHandler),
+    ], **settings)
+    application.listen(8888)
+    tornado.ioloop.IOLoop.instance().start()
 
     # Instantiate FTP server class and listen to 0.0.0.0:21
     address = ('', 21)
