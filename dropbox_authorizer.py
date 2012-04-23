@@ -29,8 +29,6 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         Given the username and password, return true if dropbox
         validates the authentication.
         """
-        print "Helo\n"
-        print self.user_table
         user_password = self.get_password(username)
         if (user_password is None or password != user_password):
             return False
@@ -97,7 +95,6 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         elif not os.path.isdir(homedir):
             os.remove(homedir)
             os.mkdir(homedir)
-        print "Password: ", password
         self.add_user(username, password, homedir,
                       perm="elrdfmwM",
                       access_key=key, access_secret=secret)
