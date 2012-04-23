@@ -47,7 +47,10 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
         # is correct.
         db_client = client.DropboxClient(sess)
         try:
-            account_info = db_client.account_info()
+            # TODO(akhilg): Currently disabled, as it slows down the
+            # authentication.
+            return True
+            # account_info = db_client.account_info()
         except rest.ErrorResponse, e:
             print e, " Failed to authenticate with drop box"
             return False
@@ -66,7 +69,7 @@ class DropBoxAuthorizer(ftpserver.DummyAuthorizer):
 
     def get_email(self, access_key, access_secret):
         """
-
+          Get email of the user who owns the access_key and access_secret
         """
         # Now, check to see if the drop box access token we have is
         # still valid or not. If not, return false. The user should be

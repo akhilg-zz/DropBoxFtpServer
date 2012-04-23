@@ -8,6 +8,7 @@ import app_config
 import dropbox_authorizer
 import dropbox_fs
 import ftpserver
+import thread_pool
 
 import web_frontend
 
@@ -27,9 +28,12 @@ def main():
     dtp_handler.read_limit = 30720  # 30 Kb/sec (30 * 1024)
     dtp_handler.write_limit = 30720  # 30 Kb/sec (30 * 1024)
 
+    tp = thread_pool.ThreadPool(app_config.MAX_UPLOAD_TO_DROPBOX);
+
     # Instantiate FTP handler class
     ftp_handler = ftpserver.FTPHandler
     ftp_handler.authorizer = authorizer
+    ftp_handler.thread_pool = tp
     # have the ftp handler use the alternative dtp handler class
     ftp_handler.dtp_handler = dtp_handler
     ftp_handler.abstracted_fs = dropbox_fs.DropBoxFileSystem
@@ -54,8 +58,8 @@ def main():
     ftpd = ftpserver.FTPServer(address, ftp_handler)
 
     # set a limit for connections
-    ftpd.max_cons = 10000
-    ftpd.max_cons_per_ip = 1000
+    ftpd.max_cons = app_config.MAX_CONNECTIONS
+    ftpd.max_cons_per_ip = app_config.MAX_CONNECTIONS_PER_IP
 
     # start ftp server
     ftpd.serve_forever()

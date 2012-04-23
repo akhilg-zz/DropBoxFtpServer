@@ -138,6 +138,7 @@ import dropbox
 import shelve
 import socket
 
+
 from ioloop import Acceptor, Connector, AsyncChat, ioloop
 
 try:
@@ -1224,8 +1225,35 @@ class DTPHandler(object, AsyncChat):
     def close(self):
         """Close the data channel, first attempting to close any remaining
         file handles."""
+        if not self.cmd_channel.use_threadpool_to_close:
+            self.close_internal()
+        else:
+            self.cmd_channel.thread_pool.add_task(DTPHandler.close_internal,
+                                                  self)
+
+    def close_internal(self):
         if not self._closed:
             self._closed = True
+            # For uploads, we have only copied the file locally, but
+            # not uploaded it to Dropbox yet.
+            if self.cmd == 'STOR' and self.file_obj is not None:
+                file = self.file_obj.name
+                line = "Starting to push %s to dropbox at %s" % (
+                    file, time.strftime("%H:%M:%S", time.localtime(time.time())))
+                self.log(line)
+                try:
+                    io_stream = io.FileIO(file)
+                    buffered_reader = io.BufferedReader(io_stream)
+                    # Give the relative path of the file to dropbox API.
+                    self.cmd_channel.fs.put_file(self.cmd_channel.fs.fs2ftp(file),
+                                                 buffered_reader)
+                    buffered_reader.close()
+                    line = "Finished pushing %s to dropbox at %s" % (
+                        file, time.strftime("%H:%M:%S", time.localtime(time.time())))
+                    self.log(line)
+                except Exception, e:
+                    print e
+                    self._resp = "426 Failed to copy to dropbox; transfer aborted."
             # RFC-959 says we must close the connection before replying
             AsyncChat.close(self)
             if self._resp:
@@ -1824,6 +1852,9 @@ class FTPHandler(object, AsyncChat):
 
     # session attributes (explained in the docstring)
     timeout = 3000
+    # Set to true when we want to close in a different thread.
+    use_threadpool_to_close = False
+    thread_pool = None
     banner = "pyftpdlib %s ready." % __ver__
     max_login_attempts = 3
     permit_foreign_addresses = False
@@ -2082,7 +2113,10 @@ class FTPHandler(object, AsyncChat):
                         return
                     arg = arg or self.fs.cwd
                 elif cmd == 'STOR':  # STOR
-                    arg = self.fs.ftp2fs(arg or self.fs.cwd)
+                    # Use threadpool to upload files as dropbox does
+                    # not have a asynchronous call.
+                    self.use_threadpool_to_close = self.thread_pool is not None
+                    arg = self.fs.ftp2fs(arg or sefl.fs.cwd)
 
                 if not self.fs.validpath(arg):
                     line = self.fs.fs2ftp(arg)
@@ -2193,25 +2227,12 @@ class FTPHandler(object, AsyncChat):
         """Called every time a file has been succesfully received.
         "file" is the absolute name of the file just being received.
         """
-        # TODO(akhilg): Make this asynchronous.
-        line = "Starting to push %s to dropbox at %s" % (
-            file, time.strftime("%H:%M:%S", time.localtime(time.time())))
-        self.log(line)
-        io_stream = io.FileIO(file)
-        buffered_reader = io.BufferedReader(io_stream)
-        # Give the relative path of the file to dropbox API.
-        self.fs.put_file(self.fs.fs2ftp(file), buffered_reader)
-        buffered_reader.close()
-        line = "Finished pushing %s to dropbox at %s" % (
-            file, time.strftime("%H:%M:%S", time.localtime(time.time())))
-        self.log(line)
 
     def on_incomplete_file_sent(self, file):
         """Called every time a file has not been entirely sent.
         (e.g. ABOR during transfer or client disconnected).
         "file" is the absolute name of that file.
         """
-        # TODO(akhilg): Handle this.
 
     def on_incomplete_file_received(self, file):
         """Called every time a file has not been entirely received
@@ -3304,6 +3325,7 @@ class FTPServer(object, Acceptor):
         self.handler = handler
         self.ip_map = []
         host, port = address
+
         # in case of FTPS class not properly configured we want errors
         # to be raised here rather than later, when client connects
         if hasattr(handler, 'get_ssl_context'):
@@ -3342,43 +3364,29 @@ class FTPServer(object, Acceptor):
 
 
     @classmethod
-    def serve_forever(cls, timeout=1.0, blocking=True):
+    def serve_forever(cls, timeout=1.0):
         """Start serving.
         - (float) timeout: the timeout passed to the underlying IO
            loop expressed in seconds (default 1.0).
-
-        - (bool) blocking: if False loop once and then return
         """
-        if blocking:
-            # localize variable access to minimize overhead
-            ioloop_ = ioloop.instance()
-            poll = ioloop_.poll
-            socket_map = ioloop_.socket_map
-            tasks = _scheduler._tasks
-            scheduler = _scheduler
-            log("Starting FTP server")
+        # localize variable access to minimize overhead
+        ioloop_ = ioloop.instance()
+        poll = ioloop_.poll
+        socket_map = ioloop_.socket_map
+        tasks = _scheduler._tasks
+        scheduler = _scheduler
+        log("Starting FTP server")
+        try:
             try:
-                try:
-                    while socket_map or tasks:
-                        poll(timeout)
-                        scheduler()
-                except (KeyboardInterrupt, SystemExit, asyncore.ExitNow):
-                    pass
-            finally:
-                log("Shutting down FTP server")
-                cls.close_all()
-        else:
-            while (asyncore.socket_map or _scheduler._tasks) and count > 0:
-                if asyncore.socket_map:
-                    poll_fun(timeout)
-                if _scheduler._tasks:
-                    _scheduler()
-                count -= 1
-            ioloop_ = ioloop.instance()
-            if ioloop_.socket_map:
-                ioloop_.poll(timeout)
-            if _scheduler._tasks:
-                _scheduler()
+                while socket_map or tasks:
+                    poll(timeout)
+                    scheduler()
+            except (KeyboardInterrupt, SystemExit, asyncore.ExitNow):
+                pass
+        finally:
+            log("Shutting down FTP server")
+            cls.close_all()
+
 
     def handle_accept(self):
         """Called when remote client initiates a connection."""
