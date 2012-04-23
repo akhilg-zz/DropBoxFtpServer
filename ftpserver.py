@@ -133,7 +133,10 @@ import heapq
 import optparse
 from tarfile import filemode as _filemode
 
+import app_config
 import dropbox
+import shelve
+import socket
 
 from ioloop import Acceptor, Connector, AsyncChat, ioloop
 
@@ -489,10 +492,13 @@ class DummyAuthorizer(object):
     write_perms = "adfmwM"
 
     def __init__(self):
-        self.user_table = {}
+        self.user_table = shelve.open(app_config.USER_DATA_FILE,
+                                      flag='c',
+                                      writeback=True)
+        print self.user_table
 
     def add_user(self, username, password, homedir, perm='elr',
-                 dropbox_session=None,
+                 access_key='', access_secret='',
                  msg_login="Login successful.", msg_quit="Goodbye."):
         """Add a user to the virtual users table.
 
@@ -530,53 +536,40 @@ class DummyAuthorizer(object):
                'operms': {},
                'msg_login': str(msg_login),
                'msg_quit': str(msg_quit),
-               'session': dropbox_session,
+               'access_key': access_key,
+               'access_secret': access_secret,
                }
         self.user_table[username] = dic
-
-    def add_anonymous(self, homedir, **kwargs):
-        """Add an anonymous user to the virtual users table.
-
-        AuthorizerError exception raised on error conditions such as
-        invalid permissions, missing home directory, or duplicate
-        anonymous users.
-
-        The keyword arguments in kwargs are the same expected by
-        add_user method: "perm", "msg_login" and "msg_quit".
-
-        The optional "perm" keyword argument is a string defaulting to
-        "elr" referencing "read-only" anonymous user's permissions.
-
-        Using write permission values ("adfmwM") results in a
-        RuntimeWarning.
-        """
-        DummyAuthorizer.add_user(self, 'anonymous', '', homedir, **kwargs)
+        # TODO(akhilg): For some reason, sync() is not working on my
+        # machine. Temporarily, close and open again to flush the
+        # data.
+        # self.user_table.sync()
+        self.user_table.close()
+        self.user_table = shelve.open(app_config.USER_DATA_FILE,
+                                      flag='c',
+                                      writeback=True)
 
     def remove_user(self, username):
         """Remove a user from the virtual users table."""
         if username in self.user_table:
             del self.user_table[username]
+            # TODO(akhilg): For some reason, sync() is not working on my
+            # machine. Temporarily, close and open again to flush the
+            # data.
+            # self.user_table.sync()
+            self.user_table.close()
+            self.user_table = shelve.open(app_config.USER_DATA_FILE,
+                                          flag='c',
+                                          writeback=True)
 
     def override_perm(self, username, directory, perm, recursive=False):
         """Override permissions for a given directory."""
-        self._check_permissions(username, perm)
-        if not os.path.isdir(directory):
-            raise ValueError('no such directory: "%s"' % directory)
-        directory = os.path.normcase(os.path.realpath(directory))
-        home = os.path.normcase(self.get_home_dir(username))
-        if directory == home:
-            raise ValueError("can't override home directory permissions")
-        if not self._issubpath(directory, home):
-            raise ValueError("path escapes user home directory")
-        self.user_table[username]['operms'][directory] = perm, recursive
 
     def validate_authentication(self, username, password):
         """Return True if the supplied username and password match the
         stored credentials."""
         if not self.has_user(username):
             return False
-        if username == 'anonymous':
-            return True
         return self.user_table[username]['pwd'] == password
 
     def impersonate_user(self, username, password):
@@ -1554,30 +1547,12 @@ class AbstractedFS(object):
             return True
         return False
 
-    # --- Wrapper methods around open() and tempfile.mkstemp
+    # --- Wrapper methods around open()
 
     def open(self, filename, mode):
         """Open a file returning its handler."""
         return open(filename, mode)
 
-    def mkstemp(self, suffix='', prefix='', dir=None, mode='wb'):
-        """A wrap around tempfile.mkstemp creating a file with a unique
-        name.  Unlike mkstemp it returns an object with a file-like
-        interface.
-        """
-        class FileWrapper:
-            def __init__(self, fd, name):
-                self.file = fd
-                self.name = name
-            def __getattr__(self, attr):
-                return getattr(self.file, attr)
-
-        text = not 'b' in mode
-        # max number of tries to find out a unique file name
-        tempfile.TMP_MAX = 50
-        fd, name = tempfile.mkstemp(suffix, prefix, dir, text=text)
-        file = os.fdopen(fd, mode)
-        return FileWrapper(file, name)
 
     # --- Wrapper methods around os.* calls
 
@@ -1971,7 +1946,7 @@ class FTPHandler(object, AsyncChat):
     # these are overridable defaults
 
     # default classes
-    authorizer = DummyAuthorizer()
+    authorizer = None
     active_dtp = ActiveDTP
     passive_dtp = PassiveDTP
     dtp_handler = DTPHandler
@@ -2228,33 +2203,16 @@ class FTPHandler(object, AsyncChat):
             # for file-system related commands check whether real path
             # destination is valid
             if self.proto_cmds[cmd]['perm'] and (cmd != 'STOU'):
-                if cmd in ('CWD', 'XCWD'):
-                    arg = self.fs.ftp2fs(arg or '/')
-                elif cmd in ('CDUP', 'XCUP'):
-                    arg = self.fs.ftp2fs('..')
-                elif cmd == 'LIST':
-                    if arg.lower() in ('-a', '-l', '-al', '-la'):
-                        arg = self.fs.ftp2fs(self.fs.cwd)
-                    else:
-                        arg = self.fs.ftp2fs(arg or self.fs.cwd)
+                if cmd == 'LIST' or cmd == 'RMD':
+                    arg = arg or self.fs.cwd
                 elif cmd == 'STAT':
                     if glob.has_magic(arg):
                         msg = 'Globbing not supported.'
                         self.respond('550 ' + msg)
                         self.log_cmd(cmd, arg, 550, msg)
                         return
-                    arg = self.fs.ftp2fs(arg or self.fs.cwd)
-                elif cmd == 'SITE CHMOD':
-                    if not ' ' in arg:
-                        msg = "Syntax error: command needs two arguments."
-                        self.respond("501 " + msg)
-                        self.log_cmd(cmd, "", 501, msg)
-                        return
-                    else:
-                        mode, arg = arg.split(' ', 1)
-                        arg = self.fs.ftp2fs(arg)
-                        kwargs = dict(mode=mode)
-                else:  # LIST, NLST, MLSD, MLST
+                    arg = arg or self.fs.cwd
+                else:  # STOR
                     arg = self.fs.ftp2fs(arg or self.fs.cwd)
 
                 if not self.fs.validpath(arg):
@@ -2372,7 +2330,8 @@ class FTPHandler(object, AsyncChat):
         self.log(line)
         io_stream = io.FileIO(file)
         buffered_reader = io.BufferedReader(io_stream)
-        self.fs.put_file(file, buffered_reader)
+        # Give the relative path of the file to dropbox API.
+        self.fs.put_file(self.fs.fs2ftp(file), buffered_reader)
         buffered_reader.close()
         line = "Finished pushing %s to dropbox at %s" % (
             file, time.strftime("%H:%M:%S", time.localtime(time.time())))
@@ -2402,7 +2361,8 @@ class FTPHandler(object, AsyncChat):
 
     def on_logout(self, username):
         """Called when user logs out due to QUIT or USER issued twice."""
-
+        # Delete the temporary directory we created
+        
     # --- internal callbacks
 
     def _on_dtp_connection(self):
@@ -2857,23 +2817,9 @@ class FTPHandler(object, AsyncChat):
         """Return a list of files in the specified directory in a
         compact form to the client.
         """
-        try:
-            if self.fs.isdir(path):
-                listing = self.run_as_current_user(self.fs.compact_listdir, path)
-            else:
-                # if path is a file we just list its name
-                self.fs.lstat(path)  # raise exc in case of problems
-                listing = [os.path.basename(path)]
-        except OSError, err:
-            self.respond('550 %s.' % _strerror(err))
-        else:
-            data = ''
-            if listing:
-                listing.sort()
-                data = '\r\n'.join(listing) + '\r\n'
-            self.push_dtp_data(data, cmd="NLST")
+        self.respond("502 Append operation not implemented.")
 
-        # --- MLST and MLSD commands
+    # --- MLST and MLSD commands
 
     # The MLST and MLSD commands are intended to standardize the file and
     # directory information returned by the server-FTP process.  These
@@ -2930,7 +2876,6 @@ class FTPHandler(object, AsyncChat):
         try:
             http_response = self.run_as_current_user(self.fs.get_file, file)
         except IOError, err:
-            print err
             why = _strerror(err)
             self.respond('550 %s.' % why)
             return
@@ -2948,6 +2893,9 @@ class FTPHandler(object, AsyncChat):
         # REST: mode = 'r+' (to permit seeking on file object)
         cmd = 'STOR'
         try:
+            dir_name = os.path.dirname(file)
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
             fd = self.run_as_current_user(self.fs.open, file, mode + 'b')
         except IOError, err:
             why = _strerror(err)
@@ -2976,48 +2924,7 @@ class FTPHandler(object, AsyncChat):
         # file that will be written.
 
         # watch for STOU preceded by REST, which makes no sense.
-        if self._restart_position:
-            self.respond("450 Can't STOU while REST request is pending.")
-            return
-
-        if line:
-            basedir, prefix = os.path.split(self.fs.ftp2fs(line))
-            prefix = prefix + '.'
-        else:
-            basedir = self.fs.ftp2fs(self.fs.cwd)
-            prefix = 'ftpd.'
-        try:
-            fd = self.run_as_current_user(self.fs.mkstemp, prefix=prefix,
-                                          dir=basedir)
-        except IOError, err:
-            # hitted the max number of tries to find out file with
-            # unique name
-            if err.errno == errno.EEXIST:
-                why = 'No usable unique file name found'
-            # something else happened
-            else:
-                why = _strerror(err)
-            self.respond("450 %s." % why)
-            return
-
-        if not self.authorizer.has_perm(self.username, 'w', fd.name):
-            try:
-                fd.close()
-                self.run_as_current_user(self.fs.remove, fd.name)
-            except OSError:
-                pass
-            self.respond("550 Not enough privileges.")
-            return
-
-        # now just acts like STOR except that restarting isn't allowed
-        filename = os.path.basename(fd.name)
-        if self.data_channel is not None:
-            self.respond("125 FILE: %s" % filename)
-            self.data_channel.file_obj = fd
-            self.data_channel.enable_receiving(self._current_type, "STOU")
-        else:
-            self.respond("150 FILE: %s" % filename)
-            self._in_dtp_queue = (fd, "STOU")
+        self.respond("502 STOU operation not implemented.")
 
     def ftp_APPE(self, file):
         """Append data to an existing file on the server."""
@@ -3119,15 +3026,26 @@ class FTPHandler(object, AsyncChat):
             self.password = line
             self.attempted_logins = 0
 
-            home = self.authorizer.get_home_dir(self.username)
-            self.fs = self.abstracted_fs(home, self)
+            # To avoid multiple connections a same user overstepping
+            # each other when copying the same file, we create a
+            # unique root directory for the session, which is removed
+            # after the session ends.
+            user_homedir = self.authorizer.get_home_dir(self.username)
+            session_root_dir = tempfile.mkdtemp(dir=user_homedir)
+            self.fs = self.abstracted_fs(session_root_dir,
+                                         self)
             self.on_login(self.username)
         else:
             self.sleeping = True
             if self.username == 'anonymous':
                 msg = "Anonymous access not allowed."
             else:
-                msg = "Authentication failed."
+                servername = app_config.SERVER_HOSTNAME
+                if servername is None or servername == '':
+                    servername = socket.gethostname()
+                host = "%s:%d" % (servername, app_config.HTTP_SERVER_PORT)
+                msg = ("Authentication failed. Please try again or visit %s/register "
+                       " to generate a new password for FTP server." % host)
             CallLater(self._auth_failed_timeout, auth_failed, self.username,
                       line, msg, _errback=self.handle_error)
             self.username = ""
@@ -3160,19 +3078,11 @@ class FTPHandler(object, AsyncChat):
 
     def ftp_CWD(self, path):
         """Change the current working directory."""
-        try:
-            self.run_as_current_user(self.fs.chdir, path)
-        except OSError, err:
-            why = _strerror(err)
-            self.respond('550 %s.' % why)
-        else:
-            self.respond('250 "%s" is the current directory.' % self.fs.cwd)
+        self.respond("502 cwd operation not implemented.")
 
     def ftp_CDUP(self, path):
         """Change into the parent directory."""
-        # Note: RFC-959 says that code 200 is required but it also says
-        # that CDUP uses the same codes as CWD.
-        self.ftp_CWD(path)
+        self.respond("502 cdup operation not implemented.")
 
     def ftp_SIZE(self, path):
         """Return size of file in a format suitable for using with
@@ -3248,7 +3158,7 @@ class FTPHandler(object, AsyncChat):
 
     def ftp_RMD(self, path):
         """Remove the specified directory."""
-        if self.fs.realpath(path) == self.fs.realpath(self.fs.root):
+        if path == "/":
             msg = "Can't remove root directory."
             self.respond("550 %s" % msg)
             return
@@ -3499,47 +3409,11 @@ class FTPHandler(object, AsyncChat):
         """Change file mode."""
         # Note: although most UNIX servers implement it, SITE CHMOD is not
         # defined in any official RFC.
-        try:
-            assert len(mode) in (3, 4)
-            for x in mode:
-                assert 0 <= int(x) <= 7
-            mode = int(mode, 8)
-        except (AssertionError, ValueError):
-            self.respond("501 Invalid SITE CHMOD format.")
-        else:
-            try:
-                self.run_as_current_user(self.fs.chmod, path, mode)
-            except OSError, err:
-                why = _strerror(err)
-                self.respond('550 %s.' % why)
-            else:
-                self.respond('200 SITE CHMOD successful.')
+        self.respond("502 Site chmod operation not implemented.")
 
     def ftp_SITE_HELP(self, line):
         """Return help text to the client for a given SITE command."""
-        if line:
-            line = line.upper()
-            if line in self.proto_cmds:
-                self.respond("214 %s" % self.proto_cmds[line]['help'])
-            else:
-                self.respond("501 Unrecognized SITE command.")
-        else:
-            self.push("214-The following SITE commands are recognized:\r\n")
-            site_cmds = []
-            keys = self.proto_cmds.keys()
-            keys.sort()
-            for cmd in keys:
-                if cmd.startswith('SITE '):
-                    site_cmds.append(' %s\r\n' % cmd[5:])
-            self.push(''.join(site_cmds))
-            self.respond("214 Help SITE command successful.")
-
-        # --- support for deprecated cmds
-
-    # RFC-1123 requires that the server treat XCUP, XCWD, XMKD, XPWD
-    # and XRMD commands as synonyms for CDUP, CWD, MKD, LIST and RMD.
-    # Such commands are obsoleted but some ftp clients (e.g. Windows
-    # ftp.exe) still use them.
+        self.respond("502 Site help operation not implemented.")
 
     def ftp_XCUP(self, line):
         """Change to the parent directory. Synonym for CDUP. Deprecated."""

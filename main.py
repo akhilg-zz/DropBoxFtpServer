@@ -1,21 +1,22 @@
 #!/usr/bin/env python
 
 import os
-import dropbox_authorizer
-import ftpserver
-import dropbox_fs
+import sys
+import threading
 
-from tornado.options import define, options
-import tornado.ioloop
-import tornado.web
 import app_config
-import web_frontend
+import dropbox_authorizer
+import dropbox_fs
+import ftpserver
 
-define('cookie_secret', default="dee")
+import web_frontend
 
 def main():
     # Instantiate a dummy authorizer for managing 'virtual' users
-    authorizer = dropbox_authorizer.DropBoxAuthorizer()
+    try:
+        authorizer = dropbox_authorizer.DropBoxAuthorizer()
+    except:
+        raise
 
     # Define a new user having full r/w permissions and a read-only
     # anonymous user
@@ -35,28 +36,21 @@ def main():
 
     # Define a customized banner (string returned when client connects)
     ftp_handler.banner = "pyftpdlib %s based ftpd ready." %ftpserver.__ver__
-
+    
     # Specify a masquerade address and the range of ports to use for
     # passive connections.  Decomment in case you're behind a NAT.
     #ftp_handler.masquerade_address = '151.25.42.11'
     #ftp_handler.passive_ports = range(60000, 65535)
 
-    # Set up the HTTP server to redirect users to authenticate via
-    # dropbox.
-    settings = dict(
-        cookie_secret=options.cookie_secret,
-        dropbox_consumer_key=app_config.APP_KEY,
-        dropbox_consumer_secret=app_config.APP_SECRET
-        )
+    # Start the web server.
+    web_fe_thread = threading.Thread(target=web_frontend.web_frontend_start,
+                                     args=(authorizer,))
+    # Mark the thread as daemon so that program shuts it down when it is closing.
+    web_fe_thread.daemon = True
+    web_fe_thread.start()
 
-    application = tornado.web.Application([
-        (r"/", web_frontend.DropboxLoginHandler),
-    ], **settings)
-    application.listen(8888)
-    tornado.ioloop.IOLoop.instance().start()
-
-    # Instantiate FTP server class and listen to 0.0.0.0:21
-    address = ('', 21)
+    # Instantiate FTP server class
+    address = ('', app_config.FTP_SERVER_PORT)
     ftpd = ftpserver.FTPServer(address, ftp_handler)
 
     # set a limit for connections
@@ -66,5 +60,6 @@ def main():
     # start ftp server
     ftpd.serve_forever()
 
+    sys.exit()
 if __name__ == '__main__':
     main()

@@ -11,12 +11,25 @@ class DropBoxFileSystem(ftpserver.AbstractedFS):
     """
     def __init__(self, root, cmd_channel):
         ftpserver.AbstractedFS.__init__(self, root, cmd_channel)
-        sess = cmd_channel.authorizer.get_session(cmd_channel.username)
-        print sess.token
+        # Now, check to see if the drop box access token we have is
+        # still validor not.
+        sess = session.DropboxSession(app_config.APP_KEY, 
+                                      app_config.APP_SECRET,
+                                      app_config.ACCESS_TYPE)
+        access_token = self.cmd_channel.authorizer.get_access_token(
+            cmd_channel.username)
+        if access_token is None:
+            return False
+        sess.set_token(access_token['key'], access_token['secret'])
         self.client = client.DropboxClient(sess)
+
+
+    def validpath(self, path):
+        return True
 
     def rmdir(self, path):
         try:
+            print path
             self.client.file_delete(path)
         except rest.ErrorResponse:
             pass
@@ -37,13 +50,18 @@ class DropBoxFileSystem(ftpserver.AbstractedFS):
         except rest.ErrorResponse:
             return None
 
+    def isdir(self, path):
+        return not self.isfile(path)
+
     # Get the list of files in the directory.
     def listdir(self, path):
         try:
+            print "LIST " , path
             dir_listing = self.get_metadata(path)['contents']
             return dir_listing
-        except rest.ErrorResponse:
-            return None
+        except rest.ErrorResponse, e:
+            print e
+            return []
 
     def compact_listdir(self, path):
         dir_listing = self.listdir(path)
