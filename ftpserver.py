@@ -1714,151 +1714,20 @@ class AbstractedFS(object):
         drwxrwxrwx   1 owner   group          0 Aug 31 18:50 e-books
         -rw-rw-rw-   1 owner   group        380 Sep 02  3:40 module.py
         """
-        if self.cmd_channel.use_gmt_times:
-            timefunc = time.gmtime
-        else:
-            timefunc = time.localtime
-        now = time.time()
         for basename in listing:
-            # TODO(akhilg): Format this better and address the WARNING on the client.
-            file = os.path.join(basedir, basename['path'])
-
-            perms = "rwxrwxrwx" # _filemode(st.st_mode)  # permissions
+            file_name = os.path.join(basedir, basename['path'])
+            perms = "-rwxrwx---" 
+            if basename['is_dir']:
+                perms= "drwxrwx---"
             size = basename['size']
-            uname = "akhilgaa"
-            gname = "akhilgaa"
+            uname = self.cmd_channel.username 
+            gname = self.cmd_channel.username
             mtime = basename['modified']
-#             # if modificaton time > 6 months shows "month year"
-#             # else "month hh:mm";  this matches proftpd format, see:
-#             # http://code.google.com/p/pyftpdlib/issues/detail?id=187
-#             if (now - st.st_mtime) > 180 * 24 * 60 * 60:
-#                 fmtstr = "%d  %Y"
-#             else:
-#                 fmtstr = "%d %H:%M"
-#             try:
-#                 mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
-#                                       time.strftime(fmtstr, mtime))
-#             except ValueError:
-#                 # It could be raised if last mtime happens to be too
-#                 # old (prior to year 1900) in which case we return
-#                 # the current time as last mtime.
-#                 mtime = timefunc()
-#                 mtimestr = "%s %s" % (_months_map[mtime.tm_mon],
-#                                       time.strftime("%d %H:%M", mtime))
 
-#             # if the file is a symlink, resolve it, e.g. "symlink -> realfile"
-#             if stat.S_ISLNK(st.st_mode) and hasattr(self, 'readlink'):
-#                 basename = basename + " -> " + self.readlink(file)
-
-            # formatting is matched with proftpd ls output
             yield "%s 1 %-8s %-8s %8s %s %s\r\n" % (perms, uname, gname,
-                                                    size, mtime, basename['path'])
+                                                    size, mtime,
+                                                    basename['path'])
 
-    def format_mlsx(self, basedir, listing, perms, facts, ignore_err=True):
-        """Return an iterator object that yields the entries of a given
-        directory or of a single file in a form suitable with MLSD and
-        MLST commands.
-
-        Every entry includes a list of "facts" referring the listed
-        element.  See RFC-3659, chapter 7, to see what every single
-        fact stands for.
-
-         - (str) basedir: the absolute dirname.
-         - (list) listing: the names of the entries in basedir
-         - (str) perms: the string referencing the user permissions.
-         - (str) facts: the list of "facts" to be returned.
-         - (bool) ignore_err: when False raise exception if os.stat()
-         call fails.
-
-        Note that "facts" returned may change depending on the platform
-        and on what user specified by using the OPTS command.
-
-        This is how output could appear to the client issuing
-        a MLSD request:
-
-        type=file;size=156;perm=r;modify=20071029155301;unique=801cd2; music.mp3
-        type=dir;size=0;perm=el;modify=20071127230206;unique=801e33; ebooks
-        type=file;size=211;perm=r;modify=20071103093626;unique=801e32; module.py
-        """
-        if self.cmd_channel.use_gmt_times:
-            timefunc = time.gmtime
-        else:
-            timefunc = time.localtime
-        permdir = ''.join([x for x in perms if x not in 'arw'])
-        permfile = ''.join([x for x in perms if x not in 'celmp'])
-        if ('w' in perms) or ('a' in perms) or ('f' in perms):
-            permdir += 'c'
-        if 'd' in perms:
-            permdir += 'p'
-        for basename in listing:
-            file = os.path.join(basedir, basename)
-            retfacts = dict()
-            # in order to properly implement 'unique' fact (RFC-3659,
-            # chapter 7.5.2) we are supposed to follow symlinks, hence
-            # use os.stat() instead of os.lstat()
-            try:
-                st = self.stat(file)
-            except OSError:
-                if ignore_err:
-                    continue
-                raise
-            # type + perm
-            if stat.S_ISDIR(st.st_mode):
-                if 'type' in facts:
-                    if basename == '.':
-                        retfacts['type'] = 'cdir'
-                    elif basename == '..':
-                        retfacts['type'] = 'pdir'
-                    else:
-                        retfacts['type'] = 'dir'
-                if 'perm' in facts:
-                    retfacts['perm'] = permdir
-            else:
-                if 'type' in facts:
-                    retfacts['type'] = 'file'
-                if 'perm' in facts:
-                    retfacts['perm'] = permfile
-            if 'size' in facts:
-                retfacts['size'] = st.st_size  # file size
-            # last modification time
-            if 'modify' in facts:
-                try:
-                    retfacts['modify'] = time.strftime("%Y%m%d%H%M%S",
-                                                        timefunc(st.st_mtime))
-                # it could be raised if last mtime happens to be too old
-                # (prior to year 1900)
-                except ValueError:
-                    pass
-            if 'create' in facts:
-                # on Windows we can provide also the creation time
-                try:
-                    retfacts['create'] = time.strftime("%Y%m%d%H%M%S",
-                                                        timefunc(st.st_ctime))
-                except ValueError:
-                    pass
-            # UNIX only
-            if 'unix.mode' in facts:
-                retfacts['unix.mode'] = oct(st.st_mode & 0777)
-            if 'unix.uid' in facts:
-                retfacts['unix.uid'] = st.st_uid
-            if 'unix.gid' in facts:
-                retfacts['unix.gid'] = st.st_gid
-
-            # We provide unique fact (see RFC-3659, chapter 7.5.2) on
-            # posix platforms only; we get it by mixing st_dev and
-            # st_ino values which should be enough for granting an
-            # uniqueness for the file listed.
-            # The same approach is used by pure-ftpd.
-            # Implementors who want to provide unique fact on other
-            # platforms should use some platform-specific method (e.g.
-            # on Windows NTFS filesystems MTF records could be used).
-            if 'unique' in facts:
-                retfacts['unique'] = "%xg%x" % (st.st_dev, st.st_ino)
-
-            # facts can be in any order but we sort them by name
-            factstring = "".join(["%s=%s;" % (x, retfacts[x]) \
-                                  for x in sorted(retfacts.keys())])
-            yield "%s %s\r\n" % (factstring, basename)
 
 
 # --- FTP
@@ -2203,7 +2072,7 @@ class FTPHandler(object, AsyncChat):
             # for file-system related commands check whether real path
             # destination is valid
             if self.proto_cmds[cmd]['perm'] and (cmd != 'STOU'):
-                if cmd == 'LIST' or cmd == 'RMD':
+                if cmd == 'LIST' or cmd == 'RMD' or cmd == 'SIZE':
                     arg = arg or self.fs.cwd
                 elif cmd == 'STAT':
                     if glob.has_magic(arg):
@@ -2212,7 +2081,7 @@ class FTPHandler(object, AsyncChat):
                         self.log_cmd(cmd, arg, 550, msg)
                         return
                     arg = arg or self.fs.cwd
-                else:  # STOR
+                elif cmd == 'STOR':  # STOR
                     arg = self.fs.ftp2fs(arg or self.fs.cwd)
 
                 if not self.fs.validpath(arg):
@@ -2819,55 +2688,17 @@ class FTPHandler(object, AsyncChat):
         """
         self.respond("502 Append operation not implemented.")
 
-    # --- MLST and MLSD commands
-
-    # The MLST and MLSD commands are intended to standardize the file and
-    # directory information returned by the server-FTP process.  These
-    # commands differ from the LIST command in that the format of the
-    # replies is strictly defined although extensible.
-
     def ftp_MLST(self, path):
         """Return information about a pathname in a machine-processable
         form as defined in RFC-3659.
         """
-        line = self.fs.fs2ftp(path)
-        basedir, basename = os.path.split(path)
-        perms = self.authorizer.get_perms(self.username)
-        try:
-            iterator = self.run_as_current_user(self.fs.format_mlsx, basedir,
-                       [basename], perms, self._current_facts, ignore_err=False)
-            data = ''.join(iterator)
-        except OSError, err:
-            self.respond('550 %s.' % _strerror(err))
-        else:
-            # since TVFS is supported (see RFC-3659 chapter 6), a fully
-            # qualified pathname should be returned
-            data = data.split(' ')[0] + ' %s\r\n' % line
-            # response is expected on the command channel
-            self.push('250-Listing "%s":\r\n' % line)
-            # the fact set must be preceded by a space
-            self.push(' ' + data)
-            self.respond('250 End MLST.')
+        self.respond("502 MLST operation not implemented.")
 
     def ftp_MLSD(self, path):
         """Return contents of a directory in a machine-processable form
         as defined in RFC-3659.
         """
-        # RFC-3659 requires 501 response code if path is not a directory
-        if not self.fs.isdir(path):
-            self.respond("501 No such directory.")
-            return
-        try:
-            listing = self.run_as_current_user(self.fs.listdir, path)
-        except OSError, err:
-            why = _strerror(err)
-            self.respond('550 %s.' % why)
-        else:
-            perms = self.authorizer.get_perms(self.username)
-            iterator = self.fs.format_mlsx(path, listing, perms,
-                       self._current_facts)
-            producer = BufferedIteratorProducer(iterator)
-            self.push_dtp_data(producer, isproducer=True, cmd="MLSD")
+        self.respond("502 MLSD operation not implemented.")
 
     def ftp_RETR(self, file):
         """Retrieve the specified file (transfer from the server to the
@@ -3105,7 +2936,7 @@ class FTPHandler(object, AsyncChat):
             self.respond("550 %s." %why)
             return
         if not self.fs.isfile(path):
-            why = "%s is not retrievable" % line
+            why = "%s is not retrievable" % path
             self.respond("550 %s." % why)
             return
         try:

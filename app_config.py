@@ -6,9 +6,10 @@ ACCESS_TYPE = 'app_folder'
 
 # The file used to store FTP user and passwords.
 USER_DATA_FILE = '.user_password'
+HOME_DIR_ROOT = '/tmp'
 
 # Name of the machine where server is running.
 SERVER_HOSTNAME = ''
 HTTP_SERVER_PORT = 8888
 FTP_SERVER_PORT = 21
-HOME_DIR_ROOT = '/tmp'
+
