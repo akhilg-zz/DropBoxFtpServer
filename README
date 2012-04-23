@@ -1,0 +1,50 @@
+Source code for an FTP server that support get/put of files on Dropbox.
+
+PRE-REQUISTES:
+-------------
+
+* Needs Tornado web server library.
+* The server should have write access to the directory it is started from 
+
+BEFORE STARTING THE SERVER
+--------------------------
+
+* Modify app_config.py to add the APP_KEY and APP_SECRET for your app.
+* Make sure the server has permission to write to USER_DATA_FILE and read/write
+  permission to HOME_DIR_ROOT
+
+Since the server listens to port 21 by default, you may need to run it as root.
+
+HOW TO RUN THE SERVER
+---------------------
+
+sudo python main.py
+
+This starts an FTP server listening at app_config.FTP_SERVER_PORT and
+an HTTP server listening at app_config.HTTP_SERVER_PORT.
+
+Users can go to http://host:HTTP_SERVER_PORT/ to register their dropbox email
+id. The server will ask you to authenticate and allow the server
+access to the app folder (see NOTES) before issuing a user id (your
+dropbox email id with '@' replaced with '?') and a password. 
+
+You can regenerate a new password by going to
+http://host:HTTP_SERVER_PORT at any time.
+
+NOTES
+------
+
+* If you want the server to get access to the full dropbox folder and
+  not just the app folder, change app_config.ACCESS_TYPE to 'dropbox'
+
+*  The code modified a lot of open source/public code (in addition to
+   using libraries like Torndao).
+
+* The FTP server is largely based on ftpserver.py from pyftpdlib.
+
+* A patch (http://code.google.com/p/pyftpdlib/issues/detail?id=203)
+  was applied to pyftpdlib to use epoll/kqueue instead of poll to
+  make it faster.
+
+* The authentication uses async_dropbox.py authored by bdarnell@.
+
