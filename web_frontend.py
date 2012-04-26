@@ -1,4 +1,5 @@
 
+
 import async_dropbox
 import app_config
 
@@ -68,7 +69,7 @@ class DropboxAuthenticationHandler(tornado.web.RequestHandler,
         self.authorize_redirect(callback_uri="/authlogin")
 
     def _on_auth(self, user):
-        print self.request
+        print "In _on_auth_: ", self.request
         if not user:
             raise tornado.web.HTTPError(500, "Dropbox auth failed")
         username = self.get_secure_cookie("user")
