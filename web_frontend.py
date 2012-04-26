@@ -31,6 +31,7 @@ class RegisterHandler(tornado.web.RequestHandler):
                    '</form></body></html>')
 
     def post(self):
+        print self.request
         username = self.get_argument("name")
         # Replace @ with '?'
         username = username.replace('@', '?')
@@ -58,6 +59,7 @@ class DropboxAuthenticationHandler(tornado.web.RequestHandler,
                                    async_dropbox.DropboxMixin):
     @tornado.web.asynchronous
     def get(self):
+        print self.request
         # If we have already generated an authorized token, get the
         # access token and create the user.
         if self.get_argument("oauth_token", None):
@@ -66,6 +68,7 @@ class DropboxAuthenticationHandler(tornado.web.RequestHandler,
         self.authorize_redirect(callback_uri="/authlogin")
 
     def _on_auth(self, user):
+        print self.request
         if not user:
             raise tornado.web.HTTPError(500, "Dropbox auth failed")
         username = self.get_secure_cookie("user")

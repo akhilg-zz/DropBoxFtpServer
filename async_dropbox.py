@@ -1,8 +1,8 @@
-import tornado.auth
+import auth
 import urllib
 from tornado.httpclient import AsyncHTTPClient
 
-class DropboxMixin(tornado.auth.OAuthMixin):
+class DropboxMixin(auth.OAuthMixin):
     """Dropbox OAuth authentication.
 
     Uses the app settings dropbox_consumer_key and dropbox_consumer_secret.
