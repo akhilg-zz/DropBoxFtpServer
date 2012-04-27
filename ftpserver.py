@@ -1587,7 +1587,13 @@ class AbstractedFS(object):
     def chdir(self, path):
         """Change the current directory."""
         # Since this is an abstraction over dropbox, just set cwd.
-        self._cwd = self.fs2ftp(path)
+        if os.path.isabs(path):
+            p = os.path.normpath(path)
+        else:
+            p = os.path.normpath(os.path.join(self._cwd, path))
+        if not p.startswith('/'):
+            p = '/' + p
+        self._cwd = p
 
     def mkdir(self, path):
         """Create the specified directory."""
