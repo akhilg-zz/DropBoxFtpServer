@@ -1586,16 +1586,8 @@ class AbstractedFS(object):
 
     def chdir(self, path):
         """Change the current directory."""
-        # temporarily join the specified directory to see if we have
-        # permissions to do so
-        basedir = os.getcwd()
-        try:
-            os.chdir(path)
-        except OSError:
-            raise
-        else:
-            os.chdir(basedir)
-            self._cwd = self.fs2ftp(path)
+        # Since this is an abstraction over dropbox, just set cwd.
+        self._cwd = self.fs2ftp(path)
 
     def mkdir(self, path):
         """Create the specified directory."""
@@ -2930,7 +2922,8 @@ class FTPHandler(object, AsyncChat):
 
     def ftp_CWD(self, path):
         """Change the current working directory."""
-        self.respond("502 cwd operation not implemented.")
+        self.fs.chdir(path)
+        self.respond('250 "%s" is the current directory.' % self.fs.cwd)
 
     def ftp_CDUP(self, path):
         """Change into the parent directory."""
